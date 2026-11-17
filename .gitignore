@@ -1,0 +1,51 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# SQLite databases & data files
+*.db
+*.sqlite
+*.sqlite3
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Local evidence files & screenshots
+data/evidence/*
+!data/evidence/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
+screenshots/
+*.png
+*.jpg
+*.jpeg
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDEs & editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Playwright & test reports
+.playwright/
+test-results/
