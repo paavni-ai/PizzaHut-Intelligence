@@ -8,7 +8,7 @@ import streamlit as st
 from config import DEFAULT_DB_PATH
 from src.db.connection import get_connection
 from src.db.repository import PizzaIntelligenceRepository
-from src.db.seed_verified_data import seed_verified_benchmarks
+from src.db.init_db import initialize_database
 from src.db.validator import DatabaseValidator
 from src.ui.styles import render_brand_header
 
@@ -102,11 +102,10 @@ def render_status_view(repo: PizzaIntelligenceRepository):
 
     # Database Maintenance Console
     st.subheader("⚙️ Database Maintenance Console")
-    with st.expander("⚠️ Database Reset & Re-seeding Controls"):
-        st.warning("Re-seeding resets tables to the verified baseline dataset across all 7 emirates and 4 channels.")
-        confirm = st.checkbox("I confirm that I want to re-seed the verified benchmarks.")
-        if st.button("Reset & Re-seed Benchmarks", type="primary", disabled=not confirm):
-            with st.spinner("Re-seeding verified database..."):
-                seed_verified_benchmarks(db_path=repo.db_path, reset=True)
-            st.success("✓ Database successfully re-seeded with verified baseline benchmarks.")
+    with st.expander("Master Reference Data Maintenance"):
+        st.caption("This updates reference tables only. Existing observations, evidence, and benchmarks are preserved.")
+        if st.button("Refresh master reference data"):
+            with st.spinner("Refreshing master reference data..."):
+                initialize_database(db_path=repo.db_path, reset=False)
+            st.success("Master reference data refreshed; recorded research rows were left in place.")
             st.rerun()

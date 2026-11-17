@@ -7,8 +7,8 @@ import streamlit as st
 
 from config import DEFAULT_DB_PATH
 from src.db.init_db import initialize_database
+from src.db.migrate import run_database_migration
 from src.db.repository import PizzaIntelligenceRepository
-from src.db.seed_verified_data import seed_verified_benchmarks
 from src.ui.styles import apply_custom_styles
 from src.ui.views.catalog_view import render_catalog_view
 from src.ui.views.channels_view import render_channels_view
@@ -35,7 +35,10 @@ apply_custom_styles()
 
 # Auto-Initialize Database if not present
 if not Path(DEFAULT_DB_PATH).exists():
-    seed_verified_benchmarks()
+    initialize_database(DEFAULT_DB_PATH)
+
+# Apply idempotent, additive schema upgrades. This never re-seeds or rewrites rows.
+run_database_migration(DEFAULT_DB_PATH)
 
 repo = PizzaIntelligenceRepository()
 

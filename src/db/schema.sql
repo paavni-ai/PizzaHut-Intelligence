@@ -2,7 +2,7 @@
 -- UAE Pizza Price Intelligence - SQLite Schema
 -- ============================================================================
 -- Enforces data integrity, historical price preservation, source evidence,
--- UAE emirates coverage, and multi-channel ordering methods.
+-- UAE emirates coverage, multi-channel ordering methods, and accuracy benchmarks.
 -- ============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -140,7 +140,7 @@ CREATE TABLE IF NOT EXISTS research_runs (
     platform_id INTEGER REFERENCES ordering_platforms(id) ON DELETE SET NULL,
     channel_id INTEGER REFERENCES ordering_channels(id) ON DELETE SET NULL,
     emirate_id INTEGER REFERENCES emirates(id) ON DELETE SET NULL,
-    status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'running', 'completed', 'failed', 'partial')),
+    status TEXT NOT NULL DEFAULT 'started' CHECK (status IN ('started', 'running', 'completed', 'failed', 'partial', 'inaccessible_anti_bot_gated')),
     items_extracted INTEGER NOT NULL DEFAULT 0,
     items_verified INTEGER NOT NULL DEFAULT 0,
     started_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -168,6 +168,7 @@ CREATE TABLE IF NOT EXISTS evidence_records (
 -- ----------------------------------------------------------------------------
 -- 11. HISTORICAL PRICE OBSERVATIONS
 -- Core price audit log. NEVER stores fake data.
+-- Supports quarantine isolation and complete checkout fees.
 -- ----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS price_observations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -183,10 +184,17 @@ CREATE TABLE IF NOT EXISTS price_observations (
     promo_price REAL CHECK (promo_price IS NULL OR promo_price >= 0),
     promo_description TEXT,
     delivery_fee REAL DEFAULT 0.0 CHECK (delivery_fee IS NULL OR delivery_fee >= 0),
+    service_fee REAL DEFAULT 0.0 CHECK (service_fee IS NULL OR service_fee >= 0),
+    vat_amount REAL DEFAULT 0.0 CHECK (vat_amount IS NULL OR vat_amount >= 0),
+    discount_amount REAL DEFAULT 0.0 CHECK (discount_amount IS NULL OR discount_amount >= 0),
+    checkout_total REAL DEFAULT 0.0 CHECK (checkout_total IS NULL OR checkout_total >= 0),
     min_order_amount REAL DEFAULT 0.0 CHECK (min_order_amount IS NULL OR min_order_amount >= 0),
     source_url TEXT NOT NULL,
     evidence_id INTEGER REFERENCES evidence_records(id) ON DELETE SET NULL,
-    verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_status IN ('verified', 'needs_review', 'unverified', 'unavailable')),
+    verification_status TEXT NOT NULL DEFAULT 'unverified' CHECK (verification_status IN ('verified', 'needs_review', 'unverified', 'unavailable', 'quarantined')),
+    data_origin TEXT NOT NULL DEFAULT 'manual_entry' CHECK (data_origin IN ('live_extraction', 'manual_entry', 'manually_verified_benchmark', 'quarantined_seed', 'test_data')),
+    is_quarantined INTEGER NOT NULL DEFAULT 0 CHECK (is_quarantined IN (0, 1)),
+    quarantine_reason TEXT,
     collected_at TEXT NOT NULL DEFAULT (datetime('now')),
     notes TEXT
 );
@@ -216,6 +224,59 @@ CREATE TABLE IF NOT EXISTS promotions (
 );
 
 -- ----------------------------------------------------------------------------
+-- 13. GROUND-TRUTH ACCURACY BENCHMARKS
+-- Expected manually verified prices for evaluating accuracy without inventing numbers.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS benchmarks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    competitor_id INTEGER NOT NULL REFERENCES competitors(id) ON DELETE CASCADE,
+    product_name TEXT NOT NULL,
+    normalized_name TEXT NOT NULL,
+    normalized_size TEXT NOT NULL CHECK (normalized_size IN ('personal', 'small', 'medium', 'large', 'xlarge', 'other')),
+    channel_id INTEGER NOT NULL REFERENCES ordering_channels(id) ON DELETE RESTRICT,
+    emirate_id INTEGER NOT NULL REFERENCES emirates(id) ON DELETE RESTRICT,
+    expected_price REAL NOT NULL CHECK (expected_price >= 0),
+    currency TEXT NOT NULL DEFAULT 'AED',
+    source_url TEXT NOT NULL,
+    verified_by TEXT NOT NULL,
+    verified_at TEXT NOT NULL DEFAULT (datetime('now')),
+    effective_date TEXT NOT NULL DEFAULT (date('now')),
+    notes TEXT
+);
+
+-- ----------------------------------------------------------------------------
+-- 14. ACCURACY EVALUATION AUDITS
+-- Log of actual accuracy evaluation runs comparing collected observations against benchmarks.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS accuracy_evaluations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evaluation_uuid TEXT NOT NULL UNIQUE,
+    run_id INTEGER REFERENCES research_runs(id) ON DELETE SET NULL,
+    total_evaluated INTEGER NOT NULL DEFAULT 0,
+    correct_count INTEGER NOT NULL DEFAULT 0,
+    incorrect_count INTEGER NOT NULL DEFAULT 0,
+    missing_count INTEGER NOT NULL DEFAULT 0,
+    uncertain_count INTEGER NOT NULL DEFAULT 0,
+    accuracy_percentage REAL,
+    evaluated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    details_json TEXT
+);
+
+-- ----------------------------------------------------------------------------
+-- 15. HUMAN CORRECTIONS AUDIT LOG
+-- Regression tracking of human corrections applied to price observations.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS human_corrections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    price_observation_id INTEGER NOT NULL REFERENCES price_observations(id) ON DELETE CASCADE,
+    previous_price REAL NOT NULL,
+    corrected_price REAL NOT NULL,
+    correction_reason TEXT NOT NULL,
+    corrected_by TEXT NOT NULL,
+    corrected_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ----------------------------------------------------------------------------
 -- INDEXES FOR HIGH-PERFORMANCE ANALYTICS & AUDITING
 -- ----------------------------------------------------------------------------
 CREATE INDEX IF NOT EXISTS idx_price_observations_competitor_date
@@ -233,6 +294,9 @@ CREATE INDEX IF NOT EXISTS idx_price_observations_variant
 CREATE INDEX IF NOT EXISTS idx_price_observations_verification
     ON price_observations(verification_status);
 
+CREATE INDEX IF NOT EXISTS idx_price_observations_quarantine
+    ON price_observations(is_quarantined);
+
 CREATE INDEX IF NOT EXISTS idx_locations_competitor_emirate
     ON locations(competitor_id, emirate_id);
 
@@ -247,3 +311,6 @@ CREATE INDEX IF NOT EXISTS idx_evidence_run
 
 CREATE INDEX IF NOT EXISTS idx_promotions_competitor
     ON promotions(competitor_id, is_active);
+
+CREATE INDEX IF NOT EXISTS idx_benchmarks_lookup
+    ON benchmarks(competitor_id, normalized_name, normalized_size, channel_id, emirate_id);

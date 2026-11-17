@@ -105,10 +105,15 @@ class GenuineResearchCollector:
             emirate_id=em_id,
             notes=notes or f"Manual/Automated research run for {competitor['name']} in {emirate_code}",
         )
+        with self.repo._get_connection() as conn:
+            run_id = conn.execute(
+                "SELECT id FROM research_runs WHERE run_uuid = ?", (run_uuid,)
+            ).fetchone()["id"]
 
         # 2. Probe Target URL & Save Evidence
         probe = self.audit_url_target(target_url)
         ev_id = self.repo.save_evidence(
+            run_id=run_id,
             source_url=target_url,
             evidence_type="url_log",
             file_hash_sha256=probe.get("content_hash"),
@@ -121,23 +126,29 @@ class GenuineResearchCollector:
         verified = 0
         now_iso = datetime.now(timezone.utc).isoformat()
 
-        # Master category for pizzas
+        # Use the submitted menu category. Non-pizzas must never inherit pizza
+        # sizes or crusts just because those fields have convenient defaults.
         categories = {cat["code"]: cat["id"] for cat in self.repo.get_all_categories()}
-        pizza_cat_id = categories.get("pizza", 1)
 
         for obs in observations:
             product_name = obs["product_name"]
             normalized_name = obs.get("normalized_name", product_name.lower().replace(" ", "_"))
-            size_name = obs["size_name"]
-            norm_size = obs.get("normalized_size", size_name.lower())
+            category_code = obs.get("category_code", "pizza")
+            if category_code not in categories:
+                raise ValueError(f"Unknown product category: {category_code}")
+            is_pizza = category_code == "pizza"
+            size_name = obs.get("size_name", "Not applicable") if is_pizza else obs.get("size_name", "Not applicable")
+            norm_size = obs.get("normalized_size", "other") if is_pizza else "other"
+            if is_pizza and norm_size not in {"personal", "small", "medium", "large", "xlarge", "other"}:
+                raise ValueError(f"Unsupported pizza size: {norm_size}")
             price = float(obs["price"])
-            crust = obs.get("crust_type", "Standard")
-            status = obs.get("verification_status", "verified")
+            crust = obs.get("crust_type", "Not stated") if is_pizza else "Not applicable"
+            status = obs.get("verification_status", "needs_review")
 
             # Create product & variant
             prod_id = self.repo.get_or_create_product(
                 competitor_id=competitor["id"],
-                category_id=pizza_cat_id,
+                category_id=categories[category_code],
                 name=product_name,
                 normalized_name=normalized_name,
                 description=obs.get("description", ""),
@@ -166,6 +177,8 @@ class GenuineResearchCollector:
                 verification_status=status,
                 collected_at=now_iso,
                 notes=obs.get("notes", ""),
+                run_id=run_id,
+                data_origin="manual_entry",
             )
             extracted += 1
             if status == "verified":

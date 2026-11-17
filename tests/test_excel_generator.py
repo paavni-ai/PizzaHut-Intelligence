@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 import openpyxl
 
-from src.db.seed_verified_data import seed_verified_benchmarks
+from src.db.init_db import initialize_database
 from src.reports.excel_generator import ExcelReportGenerator
 
 
@@ -15,7 +15,7 @@ class TestExcelReportGenerator(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "test_excel.db"
-        seed_verified_benchmarks(self.db_path)
+        initialize_database(self.db_path)
         self.generator = ExcelReportGenerator(self.db_path)
 
     def tearDown(self):
@@ -24,7 +24,7 @@ class TestExcelReportGenerator(unittest.TestCase):
     def test_generate_full_report_stream(self):
         stream = self.generator.generate_full_report()
         self.assertIsInstance(stream, io.BytesIO)
-        self.assertGreater(stream.getbuffer().nbytes, 10000)
+        self.assertGreater(stream.getbuffer().nbytes, 5000)
 
         # Validate sheets
         wb = openpyxl.load_workbook(stream)
@@ -49,7 +49,7 @@ class TestExcelReportGenerator(unittest.TestCase):
         with open(out_file, "wb") as f:
             f.write(buffer.getvalue())
         self.assertTrue(out_file.exists())
-        self.assertGreater(out_file.stat().st_size, 10000)
+        self.assertGreater(out_file.stat().st_size, 5000)
 
 
 if __name__ == "__main__":

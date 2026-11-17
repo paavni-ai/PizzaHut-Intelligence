@@ -3,6 +3,7 @@ Repository module providing clean, type-hinted CRUD operations for UAE Pizza Int
 All data access adheres to integrity rules and maintains complete audit trails.
 """
 import uuid
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional, Union
 import pandas as pd
 
 from src.db.connection import get_connection, get_db_connection
+from src.db.evidence import has_valid_artifact
 
 
 class PizzaIntelligenceRepository:
@@ -268,8 +270,8 @@ class PizzaIntelligenceRepository:
     ) -> int:
         with self._get_connection() as conn:
             row = conn.execute(
-                "SELECT id FROM products WHERE competitor_id = ? AND name = ?;",
-                (competitor_id, name),
+                "SELECT id FROM products WHERE competitor_id = ? AND category_id = ? AND name = ?;",
+                (competitor_id, category_id, name),
             ).fetchone()
             if row:
                 return row["id"]
@@ -392,10 +394,11 @@ class PizzaIntelligenceRepository:
         verification_status: str = "unverified",
         collected_at: Optional[str] = None,
         notes: Optional[str] = None,
+        data_origin: str = "manual_entry",
     ) -> int:
         if not source_url:
             raise ValueError("source_url is mandatory for every price observation.")
-        if original_price < 0:
+        if not math.isfinite(float(original_price)) or original_price < 0:
             raise ValueError("original_price must be non-negative.")
         if currency != "AED":
             raise ValueError(f"Currency must be AED, received '{currency}'.")
@@ -409,9 +412,9 @@ class PizzaIntelligenceRepository:
                     run_id, competitor_id, product_variant_id, emirate_id,
                     location_id, channel_id, platform_id, original_price,
                     currency, promo_price, promo_description, delivery_fee,
-                    min_order_amount, source_url, evidence_id,
+                    min_order_amount, source_url, evidence_id, data_origin,
                     verification_status, collected_at, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     run_id,
@@ -429,6 +432,7 @@ class PizzaIntelligenceRepository:
                     min_order_amount,
                     source_url,
                     evidence_id,
+                    data_origin,
                     verification_status,
                     timestamp,
                     notes,
@@ -437,40 +441,78 @@ class PizzaIntelligenceRepository:
             conn.commit()
             return cursor.lastrowid
 
-    def update_observation_status(self, obs_id: int, new_status: str, notes: Optional[str] = None) -> None:
+    def append_observation_revision(
+        self,
+        obs_id: int,
+        *,
+        verification_status: Optional[str] = None,
+        original_price: Optional[float] = None,
+        evidence_id: Optional[int] = None,
+        notes: Optional[str] = None,
+    ) -> int:
+        """Append a reviewed observation revision while retaining the source row."""
         with self._get_connection() as conn:
-            if notes is not None:
-                conn.execute(
-                    "UPDATE price_observations SET verification_status = ?, notes = ? WHERE id = ?;",
-                    (new_status, notes, obs_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE price_observations SET verification_status = ? WHERE id = ?;",
-                    (new_status, obs_id),
-                )
+            source = conn.execute("SELECT * FROM price_observations WHERE id = ?", (obs_id,)).fetchone()
+            if not source:
+                raise ValueError(f"Observation ID {obs_id} not found.")
+            if source["data_origin"] == "quarantined_seed" or source["is_quarantined"]:
+                raise ValueError("Quarantined seed observations cannot be promoted or revised into active data.")
+
+            next_status = verification_status or source["verification_status"]
+            next_price = source["original_price"] if original_price is None else float(original_price)
+            if not math.isfinite(next_price) or next_price < 0:
+                raise ValueError("Price must be non-negative.")
+            next_evidence_id = evidence_id if evidence_id is not None else source["evidence_id"]
+            evidence = None
+            if next_evidence_id is not None:
+                evidence = conn.execute(
+                    "SELECT source_url, file_hash_sha256, file_path FROM evidence_records WHERE id = ?",
+                    (next_evidence_id,),
+                ).fetchone()
+            if next_status == "verified" and (
+                not evidence
+                or evidence["source_url"] != source["source_url"]
+                or not has_valid_artifact(dict(evidence))
+            ):
+                raise ValueError("Verified revisions require captured evidence for the same source URL.")
+
+            revision_notes = f"Revision of observation #{obs_id}. {notes or ''}".strip()
+            cursor = conn.execute(
+                """
+                INSERT INTO price_observations (
+                    run_id, competitor_id, product_variant_id, emirate_id, location_id,
+                    channel_id, platform_id, original_price, currency, promo_price,
+                    promo_description, delivery_fee, service_fee, vat_amount,
+                    discount_amount, checkout_total, min_order_amount, source_url,
+                    evidence_id, verification_status, data_origin, is_quarantined,
+                    quarantine_reason, collected_at, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?)
+                """,
+                (
+                    source["run_id"], source["competitor_id"], source["product_variant_id"],
+                    source["emirate_id"], source["location_id"], source["channel_id"],
+                    source["platform_id"], next_price, source["currency"], source["promo_price"],
+                    source["promo_description"], source["delivery_fee"], source["service_fee"],
+                    source["vat_amount"], source["discount_amount"], source["checkout_total"],
+                    source["min_order_amount"], source["source_url"], next_evidence_id,
+                    next_status, source["data_origin"], source["is_quarantined"],
+                    source["quarantine_reason"], revision_notes,
+                ),
+            )
             conn.commit()
+            return int(cursor.lastrowid)
+
+    def update_observation_status(self, obs_id: int, new_status: str, notes: Optional[str] = None) -> int:
+        """Compatibility API; writes a new revision rather than modifying history."""
+        return self.append_observation_revision(
+            obs_id, verification_status=new_status, notes=notes or "QA status change",
+        )
 
     def update_observation_price(self, obs_id: int, new_price: float, notes: Optional[str] = None) -> None:
-        if new_price < 0:
-            raise ValueError("Price must be non-negative.")
-        with self._get_connection() as conn:
-            if notes is not None:
-                conn.execute(
-                    "UPDATE price_observations SET original_price = ?, notes = ? WHERE id = ?;",
-                    (new_price, notes, obs_id),
-                )
-            else:
-                conn.execute(
-                    "UPDATE price_observations SET original_price = ? WHERE id = ?;",
-                    (new_price, obs_id),
-                )
-            conn.commit()
+        return self.append_observation_revision(obs_id, original_price=new_price, notes=notes)
 
     def delete_observation(self, obs_id: int) -> None:
-        with self._get_connection() as conn:
-            conn.execute("DELETE FROM price_observations WHERE id = ?;", (obs_id,))
-            conn.commit()
+        raise RuntimeError("Price observations are append-only and cannot be deleted.")
 
     def get_price_observations(
         self,
@@ -487,9 +529,11 @@ class PizzaIntelligenceRepository:
             query = """
                 SELECT po.id, po.original_price, po.currency, po.promo_price, po.promo_description,
                        po.delivery_fee, po.min_order_amount, po.source_url, po.verification_status,
+                       po.data_origin, po.is_quarantined,
                        po.collected_at, po.notes,
                        c.id as competitor_id, c.name as competitor_name, c.code as competitor_code,
                        p.id as product_id, p.name as product_name, p.normalized_name,
+                       cat.code as category_code, cat.name as category_name,
                        pv.id as variant_id, pv.size_name, pv.normalized_size, pv.crust_type,
                        e.id as emirate_id, e.name_en as emirate_name, e.code as emirate_code,
                        ch.id as channel_id, ch.name as channel_name, ch.code as channel_code,
@@ -500,6 +544,7 @@ class PizzaIntelligenceRepository:
                 JOIN competitors c ON po.competitor_id = c.id
                 JOIN product_variants pv ON po.product_variant_id = pv.id
                 JOIN products p ON pv.product_id = p.id
+                JOIN categories cat ON cat.id = p.category_id
                 JOIN emirates e ON po.emirate_id = e.id
                 JOIN ordering_channels ch ON po.channel_id = ch.id
                 JOIN ordering_platforms pl ON po.platform_id = pl.id

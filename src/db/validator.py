@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from config import DEFAULT_DB_PATH, ORDERING_CHANNELS, UAE_EMIRATES, VERIFICATION_STATUSES
 from src.db.connection import get_connection
+from src.db.evidence import has_valid_artifact
+from src.matching.product_classifier import is_likely_non_pizza_name
 
 REQUIRED_TABLES = [
     "competitors",
@@ -79,6 +81,10 @@ class DatabaseValidator:
             if not price_integrity["passed"]:
                 report["errors"].extend(price_integrity["errors"])
 
+            observation_quality = self._audit_live_observation_quality(conn)
+            report["checks"]["live_observation_quality"] = observation_quality
+            report["warnings"].extend(observation_quality["warnings"])
+
             # Overall Status
             if report["errors"]:
                 report["status"] = "FAIL"
@@ -87,6 +93,68 @@ class DatabaseValidator:
             conn.close()
 
         return report
+
+    def _audit_live_observation_quality(self, conn) -> Dict[str, Any]:
+        """Read-only audit: never promotes, edits, or quarantines stored observations."""
+        rows = conn.execute(
+            """
+            SELECT po.id, po.verification_status, po.evidence_id, po.notes,
+                   p.name AS product_name, p.normalized_name,
+                   cat.code AS category_code, pv.size_name, pv.normalized_size,
+                   pv.crust_type, ev.file_hash_sha256, ev.file_path
+            FROM price_observations po
+            JOIN product_variants pv ON pv.id = po.product_variant_id
+            JOIN products p ON p.id = pv.product_id
+            JOIN categories cat ON cat.id = p.category_id
+            LEFT JOIN evidence_records ev ON ev.id = po.evidence_id
+            WHERE po.data_origin = 'live_extraction'
+            ORDER BY po.id
+            """
+        ).fetchall()
+        issues = []
+        unreviewed_verified_labels = 0
+        for row in rows:
+            if row["verification_status"] == "verified" and not (row["notes"] or "").startswith("Revision of observation #"):
+                unreviewed_verified_labels += 1
+            name = row["product_name"].casefold()
+            is_pizza_category = row["category_code"] == "pizza"
+            obvious_non_pizza = is_likely_non_pizza_name(name)
+            if (is_pizza_category and obvious_non_pizza) or (not is_pizza_category and row["normalized_size"] != "other"):
+                issues.append({
+                    "observation_id": row["id"],
+                    "product": row["product_name"],
+                    "category": row["category_code"],
+                    "size": row["size_name"],
+                    "crust": row["crust_type"],
+                    "reason": (
+                        "Likely non-pizza item stored as a pizza"
+                        if obvious_non_pizza
+                        else "Bundle/menu item has a size/crust variant; not a standalone pizza price"
+                    ),
+                    "verification_status": row["verification_status"],
+                })
+            if row["verification_status"] == "verified" and not (
+                row["evidence_id"] is not None and has_valid_artifact(dict(row))
+            ):
+                issues.append({
+                    "observation_id": row["id"],
+                    "product": row["product_name"],
+                    "category": row["category_code"],
+                    "size": row["size_name"],
+                    "crust": row["crust_type"],
+                    "reason": "Marked verified without a captured evidence artifact or hash",
+                    "verification_status": row["verification_status"],
+                })
+        return {
+            "passed": len(issues) == 0,
+            "live_extraction_count": len(rows),
+            "suspect_count": len(issues),
+            "unreviewed_verified_labels": unreviewed_verified_labels,
+            "suspect_observations": issues,
+            "warnings": [
+                f"{len(issues)} live extraction quality flags require review; records were left unchanged."
+            ] if issues else [],
+        }
 
     def _check_tables(self, conn) -> Dict[str, Any]:
         cursor = conn.cursor()

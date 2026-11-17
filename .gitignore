@@ -49,3 +49,16 @@ screenshots/
 # Playwright & test reports
 .playwright/
 test-results/
+
+# SQLite temporary files
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+
+# Private research data and captures
+data/research/
+
+# Local credentials
+credentials.json
+client_secret*.json

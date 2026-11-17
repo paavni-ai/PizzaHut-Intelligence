@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.db.seed_verified_data import seed_verified_benchmarks
+from src.db.init_db import initialize_database
 from src.scrapers.genuine_collector import GenuineResearchCollector
 
 
@@ -13,7 +13,7 @@ class TestGenuineCollector(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "test_collector.db"
-        seed_verified_benchmarks(self.db_path)
+        initialize_database(self.db_path)
         self.collector = GenuineResearchCollector(self.db_path)
 
     def tearDown(self):

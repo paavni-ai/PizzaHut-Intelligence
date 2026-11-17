@@ -87,6 +87,4 @@ Build incrementally:
 - Keep documentation updated.
 
 ## 10. Current Status
-Project foundation established.
-Development environment inspected.
-Implementation has not started.
+The existing Streamlit dashboard and SQLite database are in place. A Pizza Hut UAE public-menu collector, evidence-backed manual benchmark workflow, accuracy evaluator, and read-only audit of legacy live-extraction rows are implemented. The first live run captured 31 regional menu variants; all remain in QA until a selected branch/channel is checked. Existing historical rows are preserved; all 684 seed observations remain quarantined. See `TAKEOVER_AUDIT.md` for the repository, database, source, and test audit.
