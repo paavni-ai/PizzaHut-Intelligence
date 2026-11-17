@@ -38,6 +38,18 @@ def get_connection(db_path: Optional[Union[str, Path]] = None) -> sqlite3.Connec
 
 
 @contextmanager
+def get_db_connection(db_path: Optional[Union[str, Path]] = None) -> Generator[sqlite3.Connection, None, None]:
+    """
+    Context manager that yields a connection and ensures it is closed on exit.
+    """
+    conn = get_connection(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@contextmanager
 def get_db_cursor(db_path: Optional[Union[str, Path]] = None) -> Generator[sqlite3.Cursor, None, None]:
     """
     Context manager that yields a cursor and manages transactions.
