@@ -9,6 +9,7 @@ from src.db.connection import get_connection
 from src.db.repository import PizzaIntelligenceRepository
 from src.db.init_db import initialize_database
 from src.db.validator import DatabaseValidator
+from src.db.health import check_database_health
 from src.ui.styles import render_brand_header
 
 
@@ -17,6 +18,34 @@ def render_status_view(repo: PizzaIntelligenceRepository):
         page_title="System Status & Diagnostics",
         subtitle="Automated database validation, foreign key audits, storage metrics, and maintenance controls",
     )
+
+    st.subheader("Read-only database connection check")
+    health = check_database_health(repo.db_path)
+    h1, h2, h3 = st.columns(3)
+    h1.metric("Configured backend", "PostgreSQL" if health["backend"] == "postgresql" else "SQLite")
+    h2.metric("Connection", "Connected" if health["connected"] else "Failed")
+    h3.metric(
+        "Expected tables",
+        "Accessible" if health["expected_tables_accessible"] else "Missing / unavailable",
+    )
+    st.caption(f"Configuration source: {health['configuration_source']}. No connection details are displayed.")
+    if health["error_type"]:
+        st.error(f"Read-only database check failed ({health['error_type']}). Check the hosting platform logs.")
+        return
+    elif health["missing_tables"]:
+        st.error("Some expected application tables are unavailable: " + ", ".join(health["missing_tables"]))
+        return
+    elif health["counts"]:
+        st.dataframe(
+            pd.DataFrame(
+                [{"Table": table.replace("_", " ").title(), "Rows": count}
+                 for table, count in health["counts"].items()]
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+    st.caption("This check uses read-only queries and does not create, update or delete database records.")
+    st.divider()
 
     validator = DatabaseValidator(repo.db_path)
     report = validator.validate_all()
@@ -34,9 +63,6 @@ def render_status_view(repo: PizzaIntelligenceRepository):
             <h3 style="color:{status_color}; margin:0; font-size:1.3rem;">
                 {symbol} System Integrity Status: {report['status']}
             </h3>
-            <p style="color:#475569; margin:4px 0 0 0; font-size:0.9rem;">
-                Database: <code>{report['db_path']}</code>
-            </p>
         </div>
         """,
         unsafe_allow_html=True,

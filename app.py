@@ -6,7 +6,8 @@ from pathlib import Path
 import streamlit as st
 
 from config import DEFAULT_DB_PATH
-from src.db.connection import get_database_url
+from src.db.connection import get_database_backend_config, get_database_url
+from src.db.health import check_database_health
 from src.db.init_db import initialize_database
 from src.db.migrate import run_database_migration
 from src.db.repository import PizzaIntelligenceRepository
@@ -34,6 +35,23 @@ st.set_page_config(
 # Apply Commercial SaaS Styling
 apply_custom_styles()
 
+# Check configured PostgreSQL connectivity before initialization/migrations so a
+# failed Neon connection produces a safe, actionable screen instead of a raw
+# driver error. This health check is read-only.
+if get_database_url():
+    startup_health = check_database_health()
+    if not startup_health["connected"]:
+        st.title("Database connection diagnostics")
+        st.metric("Configured backend", "PostgreSQL")
+        st.metric("Connection", "Failed")
+        st.caption(f"Configuration source: {startup_health['configuration_source']}.")
+        st.error(
+            "The application could not connect to PostgreSQL "
+            f"({startup_health['error_type'] or 'connection error'}). "
+            "No connection details are shown. Check the Streamlit secrets and app logs."
+        )
+        st.stop()
+
 # Initialize master reference tables on a fresh Neon database. CREATE IF NOT
 # EXISTS and keyed reference-data upserts preserve all research rows.
 if get_database_url():
@@ -51,6 +69,8 @@ repo = PizzaIntelligenceRepository()
 # Sidebar Navigation & Branding
 # -----------------------------------------------------------------------------
 with st.sidebar:
+    configured_backend, _backend_source = get_database_backend_config()
+    st.caption(f"Configured storage: {'PostgreSQL' if configured_backend == 'postgresql' else 'SQLite'}")
     st.markdown(
         """
         <div style="padding: 10px 0 16px 0;">

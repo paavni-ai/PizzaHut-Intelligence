@@ -36,6 +36,7 @@ class TestStreamlitInteractions(unittest.TestCase):
             patch("config.EVIDENCE_DIR", self.root / "evidence"),
             patch("src.db.connection.DEFAULT_DB_PATH", self.db_path),
             patch("src.db.connection.get_database_url", return_value=None),
+            patch("src.db.health.get_database_backend_config", return_value=("sqlite", "test database")),
         ]
         for patcher in self._patches:
             patcher.start()

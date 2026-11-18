@@ -46,6 +46,33 @@ def get_database_url() -> Optional[str]:
         return None
 
 
+def get_database_backend_config() -> tuple[str, str]:
+    """Return safe backend metadata without returning or displaying credentials."""
+    if os.environ.get("PIZZA_DATABASE_BACKEND", "").strip().lower() == "sqlite":
+        return "sqlite", "explicit local override"
+    if os.environ.get("DATABASE_URL", "").strip():
+        return "postgresql", "environment secret"
+    env_file = PROJECT_ROOT / ".env.local"
+    if env_file.is_file():
+        try:
+            if any(
+                line.strip().startswith("DATABASE_URL=")
+                and line.split("=", 1)[1].strip().strip("\"'")
+                for line in env_file.read_text(encoding="utf-8").splitlines()
+            ):
+                return "postgresql", "local environment file"
+        except (OSError, IndexError):
+            pass
+    try:
+        import streamlit as st
+
+        if st.secrets.get("DATABASE_URL"):
+            return "postgresql", "Streamlit secrets"
+    except Exception:
+        pass
+    return "sqlite", "default local database (no DATABASE_URL configured)"
+
+
 class _HybridRow(dict):
     """Dictionary row with SQLite-compatible integer indexing."""
 
@@ -246,7 +273,12 @@ def get_connection(db_path: Optional[Union[str, Path]] = None):
             from psycopg.rows import tuple_row
         except ImportError as exc:
             raise RuntimeError("DATABASE_URL is set but psycopg is not installed.") from exc
-        connection = psycopg.connect(database_url, row_factory=tuple_row, connect_timeout=10)
+        connection = psycopg.connect(
+            database_url,
+            row_factory=tuple_row,
+            connect_timeout=10,
+            sslmode="require",
+        )
         return _PostgresConnection(connection)
 
     target_path = Path(db_path) if db_path else DEFAULT_DB_PATH

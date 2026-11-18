@@ -1,7 +1,8 @@
 """Unit coverage for SQLite-compatible PostgreSQL SQL translation."""
 import unittest
+from unittest.mock import patch
 
-from src.db.connection import _HybridRow, _translate_sql
+from src.db.connection import _HybridRow, _translate_sql, get_connection
 
 
 class TestPostgresAdapter(unittest.TestCase):
@@ -27,6 +28,14 @@ class TestPostgresAdapter(unittest.TestCase):
         self.assertEqual(row["id"], 7)
         self.assertEqual(row[0], 7)
         self.assertEqual(dict(row), {"id": 7, "name": "Pizza Hut"})
+
+    def test_postgres_connection_requires_tls_and_has_bounded_timeout(self):
+        with patch("src.db.connection.get_database_url", return_value="postgresql://redacted"):
+            with patch("psycopg.connect", return_value=object()) as connect:
+                get_connection()
+        kwargs = connect.call_args.kwargs
+        self.assertEqual(kwargs["connect_timeout"], 10)
+        self.assertEqual(kwargs["sslmode"], "require")
 
 
 if __name__ == "__main__":
