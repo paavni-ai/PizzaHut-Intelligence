@@ -60,33 +60,30 @@ def render_history_view(repo: PizzaIntelligenceRepository):
     )
 
     if trends_df.empty:
-        st.info("No historical price observations found for this criteria.")
-        return
-
-    # Chart
-    st.subheader(f"📈 Price Evolution: {sel_rec[1]} ({sel_size.upper()})")
-
-    line_chart = (
-        alt.Chart(trends_df)
-        .mark_line(point=True)
-        .encode(
-            x=alt.X("observation_date:T", title="Observation Date"),
-            y=alt.Y("avg_price:Q", title="Price (AED)", scale=alt.Scale(zero=False)),
-            color=alt.Color(
-                "competitor_name:N",
-                title="Brand",
-                scale=alt.Scale(range=["#C8102E", "#0A192F", "#0284C7", "#10B981"]),
-            ),
-            tooltip=[
-                alt.Tooltip("observation_date:T", title="Date"),
-                alt.Tooltip("competitor_name:N", title="Brand"),
-                alt.Tooltip("product_name:N", title="Product"),
-                alt.Tooltip("avg_price:Q", title="Price AED", format=".2f"),
-            ],
+        st.info("No human-reviewed, evidence-backed price history matches this selection yet.")
+    else:
+        st.subheader(f"📈 Verified Price Evolution: {sel_rec[1]} ({sel_size.upper()})")
+        line_chart = (
+            alt.Chart(trends_df)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("observation_date:T", title="Observation Date"),
+                y=alt.Y("avg_price:Q", title="Price (AED)", scale=alt.Scale(zero=False)),
+                color=alt.Color(
+                    "competitor_name:N",
+                    title="Brand",
+                    scale=alt.Scale(range=["#C8102E", "#0A192F", "#0284C7", "#10B981"]),
+                ),
+                tooltip=[
+                    alt.Tooltip("observation_date:T", title="Date"),
+                    alt.Tooltip("competitor_name:N", title="Brand"),
+                    alt.Tooltip("product_name:N", title="Product"),
+                    alt.Tooltip("avg_price:Q", title="Price AED", format=".2f"),
+                ],
+            )
+            .properties(height=380)
         )
-        .properties(height=380)
-    )
-    st.altair_chart(line_chart, use_container_width=True)
+        st.altair_chart(line_chart, use_container_width=True)
 
     # Detailed Log
     st.markdown("<br>", unsafe_allow_html=True)

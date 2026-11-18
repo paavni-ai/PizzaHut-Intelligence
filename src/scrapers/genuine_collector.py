@@ -116,9 +116,11 @@ class GenuineResearchCollector:
             run_id=run_id,
             source_url=target_url,
             evidence_type="url_log",
-            file_hash_sha256=probe.get("content_hash"),
             http_status=probe.get("status_code") or 0,
-            notes=f"HTTP probe: latency {probe.get('latency_ms')}ms, accessible={probe.get('accessible')}. {notes}",
+            notes=(
+                f"HTTP probe only (not a retained price capture): latency {probe.get('latency_ms')}ms, "
+                f"accessible={probe.get('accessible')}, response_sha256={probe.get('content_hash')}. {notes}"
+            ),
         )
 
         # 3. Insert Observations
@@ -144,6 +146,10 @@ class GenuineResearchCollector:
             price = float(obs["price"])
             crust = obs.get("crust_type", "Not stated") if is_pizza else "Not applicable"
             status = obs.get("verification_status", "needs_review")
+            # A URL probe does not independently prove that the submitted
+            # product/variant price was paired correctly. Keep it in QA.
+            if status == "verified":
+                status = "needs_review"
 
             # Create product & variant
             prod_id = self.repo.get_or_create_product(

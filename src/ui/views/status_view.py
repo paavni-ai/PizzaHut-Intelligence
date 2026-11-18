@@ -5,7 +5,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from config import DEFAULT_DB_PATH
 from src.db.connection import get_connection
 from src.db.repository import PizzaIntelligenceRepository
 from src.db.init_db import initialize_database
@@ -73,6 +72,7 @@ def render_status_view(repo: PizzaIntelligenceRepository):
     # Database Table Storage Breakdown
     st.subheader("📊 Database Table Storage & Row Counts")
     conn = get_connection(repo.db_path)
+    uses_postgres = getattr(conn, "is_postgres", False)
     cursor = conn.cursor()
 
     tables = [
@@ -92,10 +92,12 @@ def render_status_view(repo: PizzaIntelligenceRepository):
 
     conn.close()
 
-    db_file = Path(repo.db_path or DEFAULT_DB_PATH)
-    file_size_kb = db_file.stat().st_size / 1024 if db_file.exists() else 0
-
-    st.write(f"**Database File Size on Disk:** `{file_size_kb:.1f} KB`")
+    if uses_postgres:
+        st.write("**Database Storage:** `Neon PostgreSQL (persistent cloud database)`")
+    else:
+        db_file = Path(repo.db_path) if repo.db_path else Path(__file__).resolve().parents[3] / "data" / "pizza_intelligence.db"
+        file_size_kb = db_file.stat().st_size / 1024 if db_file.exists() else 0
+        st.write(f"**Database File Size on Disk:** `{file_size_kb:.1f} KB`")
     st.dataframe(pd.DataFrame(table_data), use_container_width=True)
 
     st.divider()

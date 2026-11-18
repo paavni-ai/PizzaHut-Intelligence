@@ -52,34 +52,11 @@ def render_review_view(repo: PizzaIntelligenceRepository):
             unsafe_allow_html=True,
         )
     with c4:
-        # Action button to inject a test review observation
-        st.write("&nbsp;")
-        if st.button("➕ Inject Test Item to Review", use_container_width=True):
-            comp = repo.get_competitor_by_code("dominos")
-            emirates = repo.get_all_emirates()
-            channels = repo.get_all_channels()
-            platforms = repo.get_all_platforms()
-
-            cat_id = 1
-            p_id = repo.get_or_create_product(comp["id"], cat_id, "Test ExtravaganZZa Special", "super_supreme")
-            v_id = repo.get_or_create_variant(p_id, "Large", "large", "Pan")
-            ev_id = repo.save_evidence("https://www.dominos.ae/en/pages/order/menu", notes="Simulated capture for QA test")
-
-            obs_id = repo.record_price_observation(
-                competitor_id=comp["id"],
-                product_variant_id=v_id,
-                emirate_id=emirates[0]["id"],
-                channel_id=channels[0]["id"],
-                platform_id=platforms[0]["id"],
-                original_price=69.50,
-                currency="AED",
-                source_url="https://www.dominos.ae/en/pages/order/menu",
-                evidence_id=ev_id,
-                verification_status="needs_review",
-                notes="Uncertain discount match - flagged for QA review.",
-            )
-            st.success(f"Added observation #{obs_id} to Needs Review queue.")
-            st.rerun()
+        st.markdown(
+            "<div class='kpi-container'><div class='kpi-title'>Audit Policy</div>"
+            "<div class='kpi-sub'>Research rows are never generated as QA samples.</div></div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 

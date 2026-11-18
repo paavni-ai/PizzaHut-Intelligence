@@ -103,7 +103,11 @@ class ExcelReportGenerator:
             ("Competitors Tracked", str(metrics["competitors_count"])),
             ("Active Branches", str(metrics["branch_count"])),
             ("Verified Price Records", str(metrics["verified_prices_count"])),
-            ("Avg Medium Pizza Price", f"{metrics['avg_medium_pizza_price']:.2f} AED"),
+            (
+                "Avg Medium Pizza Price",
+                f"{metrics['avg_medium_pizza_price']:.2f} AED"
+                if metrics["avg_medium_pizza_price"] is not None else "No verified price data",
+            ),
             ("Active Promotions", str(metrics["promotions_count"])),
         ]
 

@@ -175,6 +175,23 @@ class PizzaHutMenuScraper:
             notes="Captured from the public Pizza Hut UAE regional menu; prices require branch/channel review.",
         )
 
+    def _capture_http_failure(self, run_id: int, url: str, response) -> None:
+        """Retain an auditable response snapshot even when the source rejects us."""
+        try:
+            self._capture(run_id, url, response.content, response.status_code)
+        except Exception:
+            # Preserve the collection failure as a run error if evidence storage
+            # itself is unavailable; never hide the original HTTP status.
+            pass
+
+    @staticmethod
+    def _http_failure(response) -> str:
+        if response.status_code in (401, 403, 429):
+            reason = "authentication, anti-bot, or rate-limit gate; not bypassed"
+        else:
+            reason = "HTTP request rejected"
+        return f"HTTP {response.status_code}: {reason}"
+
     def run_live_extraction(self, emirate_code: str = "DXB") -> Dict[str, Any]:
         competitor = self.repo.get_competitor_by_code("pizza_hut")
         if not competitor:
@@ -200,9 +217,12 @@ class PizzaHutMenuScraper:
         started = time.time()
         extracted = 0
         errors: List[str] = []
+        catalog_evidence = None
         try:
             response = self.session.get(self.MENU_URL, timeout=20)
-            response.raise_for_status()
+            if response.status_code >= 400:
+                self._capture_http_failure(run_id, self.MENU_URL, response)
+                raise requests.HTTPError(self._http_failure(response), response=response)
             catalog_evidence = self._capture(run_id, self.MENU_URL, response.content, response.status_code)
             product_urls = self._safe_product_links(response.text, self.MENU_URL)
             if not product_urls:
@@ -211,7 +231,9 @@ class PizzaHutMenuScraper:
             for product_url in product_urls:
                 try:
                     product_response = self.session.get(product_url, timeout=20)
-                    product_response.raise_for_status()
+                    if product_response.status_code >= 400:
+                        self._capture_http_failure(run_id, product_url, product_response)
+                        raise requests.HTTPError(self._http_failure(product_response), response=product_response)
                     evidence_id = self._capture(run_id, product_url, product_response.content, product_response.status_code)
                     variants = parse_pizza_hut_product_page(product_response.text)
                     if not variants:
@@ -251,8 +273,12 @@ class PizzaHutMenuScraper:
                         extracted += 1
                 except requests.RequestException as exc:
                     errors.append(f"{product_url}: {exc}")
+                except Exception as exc:
+                    errors.append(f"{product_url}: processing failed ({type(exc).__name__})")
         except requests.RequestException as exc:
             errors.append(str(exc))
+        except Exception as exc:
+            errors.append(f"Catalog processing failed ({type(exc).__name__})")
 
         final_status = "completed" if extracted and not errors else ("partial" if extracted else "failed")
         self.repo.update_research_run(
@@ -267,7 +293,7 @@ class PizzaHutMenuScraper:
             "status": final_status,
             "items_extracted": extracted,
             "items_verified": 0,
-            "catalog_evidence_id": locals().get("catalog_evidence"),
+            "catalog_evidence_id": catalog_evidence,
             "elapsed_ms": int((time.time() - started) * 1000),
             "errors": errors,
         }

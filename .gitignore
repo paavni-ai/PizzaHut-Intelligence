@@ -282,3 +282,5 @@ data/research/
 # Local credentials
 credentials.json
 client_secret*.json
+.neon
+node_modules/

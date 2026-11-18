@@ -50,7 +50,7 @@ class TestGenuineCollector(unittest.TestCase):
 
         self.assertIn("run_uuid", run_result)
         self.assertEqual(run_result["items_extracted"], 1)
-        self.assertEqual(run_result["items_verified"], 1)
+        self.assertEqual(run_result["items_verified"], 0)
         self.assertEqual(run_result["status"], "completed")
 
 

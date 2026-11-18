@@ -14,9 +14,8 @@ from src.scrapers.pizzahut_scraper import PizzaHutMenuScraper
 
 
 class _FakeResponse:
-    status_code = 200
-
-    def __init__(self, html):
+    def __init__(self, html, status_code=200):
+        self.status_code = status_code
         self.text = html
         self.content = html.encode("utf-8")
 
@@ -32,7 +31,8 @@ class _FakeSession:
     def get(self, url, timeout):
         if url not in self.pages:
             raise AssertionError(f"Unexpected URL: {url}")
-        return _FakeResponse(self.pages[url])
+        page = self.pages[url]
+        return page if isinstance(page, _FakeResponse) else _FakeResponse(page)
 
 
 class TestResearchWorkflow(unittest.TestCase):
@@ -115,6 +115,25 @@ class TestResearchWorkflow(unittest.TestCase):
         self.assertTrue(all(row["source_url"] == product_url and row["collected_at"] for row in rows))
         self.assertTrue(all(Path(row["file_path"]).is_file() and row["file_hash_sha256"] for row in rows))
         self.assertTrue(all(row["crust_type"] == "Not stated on public menu" for row in rows))
+
+    def test_http_gate_is_recorded_as_failed_run_with_response_evidence(self):
+        scraper = PizzaHutMenuScraper(
+            db_path=self.db_path,
+            session=_FakeSession({PizzaHutMenuScraper.MENU_URL: _FakeResponse("Access denied", 403)}),
+            evidence_dir=Path(self.temp_dir.name) / "captured_evidence",
+        )
+        result = scraper.run_live_extraction("DXB")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["items_extracted"], 0)
+        self.assertIn("not bypassed", result["errors"][0])
+        conn = get_connection(self.db_path)
+        run = conn.execute("SELECT status, error_message FROM research_runs WHERE run_uuid=?", (result["run_uuid"],)).fetchone()
+        evidence = conn.execute("SELECT http_status, file_hash_sha256 FROM evidence_records WHERE run_id=(SELECT id FROM research_runs WHERE run_uuid=?)", (result["run_uuid"],)).fetchone()
+        conn.close()
+        self.assertEqual(run["status"], "failed")
+        self.assertIn("403", run["error_message"])
+        self.assertEqual(evidence["http_status"], 403)
+        self.assertTrue(evidence["file_hash_sha256"])
 
     def test_default_benchmark_seed_is_a_noop(self):
         self.assertEqual(seed_ground_truth_benchmarks(self.db_path), 0)
@@ -221,15 +240,22 @@ class TestResearchWorkflow(unittest.TestCase):
         platform = next(row for row in repo.get_all_platforms() if row["code"] == "direct_web")
         product_id = repo.get_or_create_product(competitor["id"], category["id"], "Buffalo Wings", "buffalo_wings")
         variant_id = repo.get_or_create_variant(product_id, "Medium", "medium", "Pan")
+        capture_path = Path(self.temp_dir.name) / "unreviewed-legacy.html"
+        capture_path.write_text("<html>Unreviewed legacy capture</html>", encoding="utf-8")
+        evidence_id = repo.save_evidence(
+            "https://example.com/menu", evidence_type="html_snapshot",
+            file_path=str(capture_path),
+            file_hash_sha256=hashlib.sha256(capture_path.read_bytes()).hexdigest(),
+        )
         repo.record_price_observation(
             competitor_id=competitor["id"], product_variant_id=variant_id,
             emirate_id=emirate["id"], channel_id=channel["id"], platform_id=platform["id"],
             original_price=38, source_url="https://example.com/menu",
-            verification_status="verified", data_origin="live_extraction",
+            evidence_id=evidence_id, verification_status="verified", data_origin="live_extraction",
         )
         audit = DatabaseValidator(self.db_path).validate_all()["checks"]["live_observation_quality"]
         self.assertEqual(audit["live_extraction_count"], 1)
-        self.assertGreaterEqual(audit["suspect_count"], 2)
+        self.assertGreaterEqual(audit["suspect_count"], 1)
         self.assertEqual(audit["unreviewed_verified_labels"], 1)
 
 

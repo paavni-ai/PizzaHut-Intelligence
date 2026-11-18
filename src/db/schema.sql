@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS evidence_records (
     evidence_type TEXT NOT NULL CHECK (evidence_type IN ('screenshot', 'html_snapshot', 'json_payload', 'url_log', 'api_response')),
     source_url TEXT NOT NULL,
     file_path TEXT,
+    artifact_content BLOB,
     file_hash_sha256 TEXT,
     http_status INTEGER,
     captured_at TEXT NOT NULL DEFAULT (datetime('now')),

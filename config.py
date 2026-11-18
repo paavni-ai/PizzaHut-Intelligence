@@ -1,14 +1,17 @@
 """
 Global configuration for UAE Pizza Price Intelligence platform.
 """
+import os
 from pathlib import Path
 
 # Base Paths
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
-EVIDENCE_DIR = DATA_DIR / "evidence"
+if os.environ.get("PIZZA_DATA_DIR"):
+    DATA_DIR = Path(os.environ["PIZZA_DATA_DIR"]).expanduser().resolve()
+EVIDENCE_DIR = Path(os.environ.get("PIZZA_EVIDENCE_DIR", DATA_DIR / "evidence")).expanduser().resolve()
 EXPORTS_DIR = DATA_DIR / "exports"
-DEFAULT_DB_PATH = DATA_DIR / "pizza_intelligence.db"
+DEFAULT_DB_PATH = Path(os.environ.get("PIZZA_DB_PATH", DATA_DIR / "pizza_intelligence.db")).expanduser().resolve()
 
 # Currency
 CURRENCY_CODE = "AED"

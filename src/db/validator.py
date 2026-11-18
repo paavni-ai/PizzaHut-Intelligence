@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from config import DEFAULT_DB_PATH, ORDERING_CHANNELS, UAE_EMIRATES, VERIFICATION_STATUSES
-from src.db.connection import get_connection
+from src.db.connection import get_connection, get_database_url
 from src.db.evidence import has_valid_artifact
 from src.matching.product_classifier import is_likely_non_pizza_name
 
@@ -35,16 +35,19 @@ REQUIRED_TABLES = [
 
 class DatabaseValidator:
     def __init__(self, db_path: Optional[Union[str, Path]] = None):
-        self.db_path = db_path or DEFAULT_DB_PATH
+        self.db_path = db_path
 
     def validate_all(self) -> Dict[str, Any]:
         """
         Runs comprehensive validation tests and returns a structured health report.
         """
         conn = get_connection(self.db_path)
+        display_path = str(self.db_path) if self.db_path else (
+            "Neon PostgreSQL" if get_database_url() else str(DEFAULT_DB_PATH)
+        )
         report: Dict[str, Any] = {
             "status": "PASS",
-            "db_path": str(self.db_path),
+            "db_path": display_path,
             "errors": [],
             "warnings": [],
             "checks": {},
@@ -96,12 +99,18 @@ class DatabaseValidator:
 
     def _audit_live_observation_quality(self, conn) -> Dict[str, Any]:
         """Read-only audit: never promotes, edits, or quarantines stored observations."""
+        evidence_validity = {
+            row["id"]: has_valid_artifact(dict(row))
+            for row in conn.execute(
+                "SELECT id, file_path, artifact_content, file_hash_sha256 FROM evidence_records;"
+            ).fetchall()
+        }
         rows = conn.execute(
             """
             SELECT po.id, po.verification_status, po.evidence_id, po.notes,
                    p.name AS product_name, p.normalized_name,
                    cat.code AS category_code, pv.size_name, pv.normalized_size,
-                   pv.crust_type, ev.file_hash_sha256, ev.file_path
+                   pv.crust_type
             FROM price_observations po
             JOIN product_variants pv ON pv.id = po.product_variant_id
             JOIN products p ON p.id = pv.product_id
@@ -134,7 +143,7 @@ class DatabaseValidator:
                     "verification_status": row["verification_status"],
                 })
             if row["verification_status"] == "verified" and not (
-                row["evidence_id"] is not None and has_valid_artifact(dict(row))
+                row["evidence_id"] is not None and evidence_validity.get(row["evidence_id"], False)
             ):
                 issues.append({
                     "observation_id": row["id"],
@@ -158,7 +167,13 @@ class DatabaseValidator:
 
     def _check_tables(self, conn) -> Dict[str, Any]:
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        if getattr(conn, "is_postgres", False):
+            cursor.execute(
+                "SELECT table_name AS name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_type = 'BASE TABLE';"
+            )
+        else:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
         existing_tables = {row["name"] for row in cursor.fetchall()}
         missing = [t for t in REQUIRED_TABLES if t not in existing_tables]
 
@@ -171,10 +186,22 @@ class DatabaseValidator:
 
     def _check_foreign_keys(self, conn) -> Dict[str, Any]:
         cursor = conn.cursor()
-        cursor.execute("PRAGMA foreign_key_check;")
-        fk_violations = cursor.fetchall()
+        if getattr(conn, "is_postgres", False):
+            # PostgreSQL enforces these constraints on every write; also flag
+            # any foreign keys deliberately marked NOT VALID.
+            cursor.execute(
+                "SELECT conname FROM pg_constraint "
+                "WHERE contype = 'f' AND NOT convalidated;"
+            )
+            fk_violations = cursor.fetchall()
+        else:
+            cursor.execute("PRAGMA foreign_key_check;")
+            fk_violations = cursor.fetchall()
         passed = len(fk_violations) == 0
-        errors = [f"Foreign key violation in table {row[0]}, rowid {row[1]}" for row in fk_violations]
+        if getattr(conn, "is_postgres", False):
+            errors = [f"Unvalidated foreign key constraint: {row[0]}" for row in fk_violations]
+        else:
+            errors = [f"Foreign key violation in table {row[0]}, rowid {row[1]}" for row in fk_violations]
         return {"passed": passed, "violations_count": len(fk_violations), "errors": errors}
 
     def _check_emirates(self, conn) -> Dict[str, Any]:

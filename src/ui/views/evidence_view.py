@@ -1,6 +1,7 @@
 """
 Source Evidence Vault & Cryptographic Audit Explorer View.
 """
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 
@@ -23,6 +24,7 @@ def render_evidence_view(repo: PizzaIntelligenceRepository):
     # Metrics
     total_ev = len(evidence_records)
     total_linked = sum(e["linked_prices_count"] for e in evidence_records)
+    linked_evidence_count = sum(bool(e["linked_prices_count"]) for e in evidence_records)
     avg_linked = total_linked / total_ev if total_ev > 0 else 0
 
     c1, c2, c3 = st.columns(3)
@@ -40,7 +42,7 @@ def render_evidence_view(repo: PizzaIntelligenceRepository):
             f"""<div class="kpi-container">
                 <div class="kpi-title">Linked Observations</div>
                 <div class="kpi-value">{total_linked}</div>
-                <div class="kpi-sub">Prices verified by evidence</div>
+                <div class="kpi-sub">Price records linked to captured artifacts</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -48,8 +50,8 @@ def render_evidence_view(repo: PizzaIntelligenceRepository):
         st.markdown(
             f"""<div class="kpi-container">
                 <div class="kpi-title">Audit Coverage Ratio</div>
-                <div class="kpi-value">100%</div>
-                <div class="kpi-sub">Every price has evidence linkage</div>
+                <div class="kpi-value">{linked_evidence_count / max(total_ev, 1) * 100:.0f}%</div>
+                <div class="kpi-sub">Evidence records linked to an observation</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -93,6 +95,19 @@ def render_evidence_view(repo: PizzaIntelligenceRepository):
         st.markdown(f"**SHA-256 Checksum:**")
         st.code(ev_item["file_hash_sha256"] or "N/A", language="text")
         st.markdown(f"**Audit Notes:** {ev_item['notes'] or 'None'}")
+
+    artifact = repo.get_evidence_artifact(sel_id)
+    if artifact and artifact["content"] is not None:
+        file_name = Path(artifact.get("file_path") or f"evidence-{sel_id}.bin").name
+        st.download_button(
+            "Download captured evidence",
+            data=artifact["content"],
+            file_name=file_name,
+            mime="text/html" if file_name.lower().endswith((".html", ".htm")) else "application/octet-stream",
+            key=f"download_evidence_{sel_id}",
+        )
+    else:
+        st.info("This record has no retained file artifact; its source URL and capture metadata remain available.")
 
     # Linked Observations Sub-table
     st.markdown("<br>", unsafe_allow_html=True)

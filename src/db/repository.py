@@ -218,19 +218,25 @@ class PizzaIntelligenceRepository:
         notes: Optional[str] = None,
     ) -> int:
         now = datetime.now(timezone.utc).isoformat()
+        artifact_content = None
+        if file_path:
+            local_artifact = Path(file_path)
+            if local_artifact.is_file():
+                artifact_content = local_artifact.read_bytes()
         with self._get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO evidence_records (
-                    run_id, evidence_type, source_url, file_path,
+                    run_id, evidence_type, source_url, file_path, artifact_content,
                     file_hash_sha256, http_status, captured_at, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     run_id,
                     evidence_type,
                     source_url,
                     file_path,
+                    artifact_content,
                     file_hash_sha256,
                     http_status,
                     now,
@@ -244,7 +250,9 @@ class PizzaIntelligenceRepository:
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT ev.*,
+                SELECT ev.id, ev.run_id, ev.evidence_type, ev.source_url,
+                       ev.file_path, ev.file_hash_sha256, ev.http_status,
+                       ev.captured_at, ev.notes,
                        COUNT(p.id) as linked_prices_count
                 FROM evidence_records ev
                 LEFT JOIN price_observations p ON p.evidence_id = ev.id
@@ -254,6 +262,24 @@ class PizzaIntelligenceRepository:
                 (limit,),
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def get_evidence_artifact(self, evidence_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve one captured artifact without loading blobs in the evidence list."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT file_path, artifact_content, file_hash_sha256 FROM evidence_records WHERE id = ?;",
+                (evidence_id,),
+            ).fetchone()
+        if not row:
+            return None
+        content = row["artifact_content"]
+        if content is not None:
+            content = bytes(content)
+        elif row["file_path"] and Path(row["file_path"]).is_file():
+            content = Path(row["file_path"]).read_bytes()
+        else:
+            content = None
+        return {"content": content, "file_hash_sha256": row["file_hash_sha256"], "file_path": row["file_path"]}
 
     # -------------------------------------------------------------------------
     # Product & Variant Management
@@ -406,6 +432,18 @@ class PizzaIntelligenceRepository:
         timestamp = collected_at or datetime.now(timezone.utc).isoformat()
 
         with self._get_connection() as conn:
+            if verification_status == "verified":
+                evidence = conn.execute(
+                    "SELECT source_url, file_path, artifact_content, file_hash_sha256 "
+                    "FROM evidence_records WHERE id = ?;",
+                    (evidence_id,),
+                ).fetchone() if evidence_id is not None else None
+                if (
+                    not evidence
+                    or evidence["source_url"] != source_url
+                    or not has_valid_artifact(dict(evidence))
+                ):
+                    raise ValueError("Verified observations require hash-valid captured evidence for the same source URL.")
             cursor = conn.execute(
                 """
                 INSERT INTO price_observations (
@@ -522,6 +560,7 @@ class PizzaIntelligenceRepository:
         verification_statuses: Optional[List[str]] = None,
         normalized_sizes: Optional[List[str]] = None,
         search_query: Optional[str] = None,
+        trusted_only: bool = False,
         limit: int = 500,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -553,6 +592,17 @@ class PizzaIntelligenceRepository:
                 WHERE 1=1
             """
             params: List[Any] = []
+            if trusted_only:
+                query += """
+                    AND po.verification_status = 'verified'
+                    AND po.is_quarantined = 0
+                    AND po.evidence_id IS NOT NULL
+                    AND ev.file_hash_sha256 IS NOT NULL
+                    AND (
+                        (po.data_origin = 'live_extraction' AND po.notes LIKE 'Revision of observation #%')
+                        OR po.data_origin = 'manual_entry'
+                    )
+                """
             if competitor_ids:
                 placeholders = ",".join("?" for _ in competitor_ids)
                 query += f" AND po.competitor_id IN ({placeholders})"
@@ -580,8 +630,18 @@ class PizzaIntelligenceRepository:
             query += " ORDER BY po.collected_at DESC, po.id DESC LIMIT ? OFFSET ?;"
             params.extend([limit, offset])
 
-            rows = conn.execute(query, params).fetchall()
-            return [dict(row) for row in rows]
+            rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+            if trusted_only and rows:
+                evidence_ids = {row["evidence_id"] for row in rows if row["evidence_id"] is not None}
+                valid_evidence = {}
+                for evidence_id in evidence_ids:
+                    evidence = conn.execute(
+                        "SELECT file_path, artifact_content, file_hash_sha256 FROM evidence_records WHERE id = ?;",
+                        (evidence_id,),
+                    ).fetchone()
+                    valid_evidence[evidence_id] = bool(evidence and has_valid_artifact(dict(evidence)))
+                rows = [row for row in rows if valid_evidence.get(row["evidence_id"], False)]
+            return rows
 
     def get_price_observations_df(self, **kwargs) -> pd.DataFrame:
         data = self.get_price_observations(**kwargs)
@@ -601,7 +661,6 @@ class PizzaIntelligenceRepository:
         with self._get_connection() as conn:
             query = """
                 SELECT p.normalized_name as canonical_pizza,
-                       p.name as item_name,
                        c.name as competitor_name,
                        c.code as competitor_code,
                        AVG(po.original_price) as avg_price,
@@ -609,8 +668,16 @@ class PizzaIntelligenceRepository:
                 FROM price_observations po
                 JOIN product_variants pv ON po.product_variant_id = pv.id
                 JOIN products p ON pv.product_id = p.id
+                JOIN categories cat ON cat.id = p.category_id
                 JOIN competitors c ON po.competitor_id = c.id
+                JOIN evidence_records ev ON ev.id = po.evidence_id
                 WHERE pv.normalized_size = ?
+                  AND cat.code = 'pizza'
+                  AND po.verification_status = 'verified'
+                  AND po.is_quarantined = 0
+                  AND po.evidence_id IS NOT NULL
+                  AND ev.file_hash_sha256 IS NOT NULL
+                  AND (po.data_origin = 'manual_entry' OR (po.data_origin = 'live_extraction' AND po.notes LIKE 'Revision of observation #%'))
             """
             params: List[Any] = [normalized_size]
             if emirate_id:
@@ -646,8 +713,14 @@ class PizzaIntelligenceRepository:
                 JOIN products p ON pv.product_id = p.id
                 JOIN emirates e ON po.emirate_id = e.id
                 JOIN ordering_channels ch ON po.channel_id = ch.id
+                JOIN evidence_records ev ON ev.id = po.evidence_id
+                WHERE po.verification_status = 'verified'
+                  AND po.is_quarantined = 0
+                  AND ev.file_hash_sha256 IS NOT NULL
+                  AND (po.data_origin = 'manual_entry' OR (po.data_origin = 'live_extraction' AND po.notes LIKE 'Revision of observation #%'))
                 GROUP BY c.id, p.id, pv.id, e.id
-                HAVING direct_price IS NOT NULL AND aggregator_price IS NOT NULL;
+                HAVING MAX(CASE WHEN ch.code = 'direct_delivery' THEN po.original_price END) IS NOT NULL
+                   AND MAX(CASE WHEN ch.code = 'third_party_delivery' THEN po.original_price END) IS NOT NULL;
             """
             rows = conn.execute(query).fetchall()
             results = []
@@ -674,37 +747,27 @@ class PizzaIntelligenceRepository:
         normalized_size: Optional[str] = None,
         emirate_id: Optional[int] = None,
     ) -> pd.DataFrame:
-        with self._get_connection() as conn:
-            query = """
-                SELECT date(po.collected_at) as observation_date,
-                       c.name as competitor_name,
-                       p.name as product_name,
-                       pv.size_name,
-                       e.name_en as emirate_name,
-                       AVG(po.original_price) as avg_price
-                FROM price_observations po
-                JOIN competitors c ON po.competitor_id = c.id
-                JOIN product_variants pv ON po.product_variant_id = pv.id
-                JOIN products p ON pv.product_id = p.id
-                JOIN emirates e ON po.emirate_id = e.id
-                WHERE 1=1
-            """
-            params: List[Any] = []
-            if normalized_name:
-                query += " AND p.normalized_name = ?"
-                params.append(normalized_name)
-            if normalized_size:
-                query += " AND pv.normalized_size = ?"
-                params.append(normalized_size)
-            if emirate_id:
-                query += " AND po.emirate_id = ?"
-                params.append(emirate_id)
-
-            query += " GROUP BY observation_date, c.name, p.name, pv.size_name ORDER BY observation_date ASC;"
-            rows = conn.execute(query, params).fetchall()
-            if not rows:
-                return pd.DataFrame()
-            return pd.DataFrame([dict(r) for r in rows])
+        data = self.get_price_observations(
+            emirate_ids=[emirate_id] if emirate_id else None,
+            normalized_sizes=[normalized_size] if normalized_size else None,
+            trusted_only=True,
+            limit=5000,
+        )
+        if normalized_name:
+            data = [row for row in data if row["normalized_name"] == normalized_name]
+        if not data:
+            return pd.DataFrame()
+        frame = pd.DataFrame(data)
+        frame["observation_date"] = pd.to_datetime(frame["collected_at"], utc=True).dt.date
+        return (
+            frame.groupby(
+                ["observation_date", "competitor_name", "product_name", "size_name", "emirate_name"],
+                as_index=False,
+            )["original_price"]
+            .mean()
+            .rename(columns={"original_price": "avg_price"})
+            .sort_values("observation_date")
+        )
 
     # -------------------------------------------------------------------------
     # Promotions & Deals
@@ -781,9 +844,25 @@ class PizzaIntelligenceRepository:
         with self._get_connection() as conn:
             comp_count = conn.execute("SELECT COUNT(*) FROM competitors WHERE is_active = 1;").fetchone()[0]
             prod_count = conn.execute("SELECT COUNT(*) FROM products;").fetchone()[0]
-            verified_count = conn.execute(
-                "SELECT COUNT(*) FROM price_observations WHERE verification_status = 'verified';"
-            ).fetchone()[0]
+            eligible_verified_rows = conn.execute(
+                """SELECT po.id, po.evidence_id
+                   FROM price_observations po
+                   WHERE po.verification_status = 'verified'
+                     AND po.is_quarantined = 0
+                     AND po.evidence_id IS NOT NULL
+                     AND (po.data_origin = 'manual_entry' OR
+                          (po.data_origin = 'live_extraction' AND po.notes LIKE 'Revision of observation #%'));"""
+            ).fetchall()
+            evidence_validity = {}
+            for evidence_id in {row["evidence_id"] for row in eligible_verified_rows}:
+                evidence = conn.execute(
+                    "SELECT file_path, artifact_content, file_hash_sha256 FROM evidence_records WHERE id = ?;",
+                    (evidence_id,),
+                ).fetchone()
+                evidence_validity[evidence_id] = bool(evidence and has_valid_artifact(dict(evidence)))
+            verified_count = sum(
+                1 for row in eligible_verified_rows if evidence_validity.get(row["evidence_id"], False)
+            )
             needs_review_count = conn.execute(
                 "SELECT COUNT(*) FROM price_observations WHERE verification_status = 'needs_review';"
             ).fetchone()[0]
@@ -794,15 +873,26 @@ class PizzaIntelligenceRepository:
             branch_count = conn.execute("SELECT COUNT(*) FROM locations WHERE is_active = 1;").fetchone()[0]
 
             # Average medium pizza price
-            avg_med_row = conn.execute(
-                """
-                SELECT AVG(po.original_price)
-                FROM price_observations po
-                JOIN product_variants pv ON po.product_variant_id = pv.id
-                WHERE pv.normalized_size = 'medium';
-                """
-            ).fetchone()
-            avg_med_price = round(avg_med_row[0], 2) if (avg_med_row and avg_med_row[0]) else 0.0
+            medium_rows = conn.execute(
+                """SELECT po.original_price, po.evidence_id, ev.file_path,
+                          ev.artifact_content, ev.file_hash_sha256
+                   FROM price_observations po
+                   JOIN product_variants pv ON po.product_variant_id = pv.id
+                   JOIN products p ON pv.product_id = p.id
+                   JOIN categories cat ON cat.id = p.category_id
+                   JOIN evidence_records ev ON ev.id = po.evidence_id
+                   WHERE pv.normalized_size = 'medium'
+                     AND cat.code = 'pizza'
+                     AND po.verification_status = 'verified'
+                     AND po.is_quarantined = 0
+                     AND (po.data_origin = 'manual_entry' OR
+                          (po.data_origin = 'live_extraction' AND po.notes LIKE 'Revision of observation #%'));"""
+            ).fetchall()
+            medium_prices = [
+                row["original_price"] for row in medium_rows
+                if has_valid_artifact(dict(row))
+            ]
+            avg_med_price = round(sum(medium_prices) / len(medium_prices), 2) if medium_prices else None
 
             return {
                 "competitors_count": comp_count,

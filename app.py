@@ -6,6 +6,7 @@ from pathlib import Path
 import streamlit as st
 
 from config import DEFAULT_DB_PATH
+from src.db.connection import get_database_url
 from src.db.init_db import initialize_database
 from src.db.migrate import run_database_migration
 from src.db.repository import PizzaIntelligenceRepository
@@ -33,12 +34,16 @@ st.set_page_config(
 # Apply Commercial SaaS Styling
 apply_custom_styles()
 
-# Auto-Initialize Database if not present
-if not Path(DEFAULT_DB_PATH).exists():
-    initialize_database(DEFAULT_DB_PATH)
-
-# Apply idempotent, additive schema upgrades. This never re-seeds or rewrites rows.
-run_database_migration(DEFAULT_DB_PATH)
+# Initialize master reference tables on a fresh Neon database. CREATE IF NOT
+# EXISTS and keyed reference-data upserts preserve all research rows.
+if get_database_url():
+    initialize_database()
+    run_database_migration()
+else:
+    # Local SQLite remains the fallback for development without DATABASE_URL.
+    if not Path(DEFAULT_DB_PATH).exists():
+        initialize_database(DEFAULT_DB_PATH)
+    run_database_migration(DEFAULT_DB_PATH)
 
 repo = PizzaIntelligenceRepository()
 

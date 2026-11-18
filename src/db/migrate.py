@@ -16,7 +16,13 @@ def run_database_migration(db_path: Optional[Union[str, Path]] = None) -> None:
 
     try:
         # 1. Add missing columns to price_observations if not present
-        cursor.execute("PRAGMA table_info(price_observations);")
+        if getattr(conn, "is_postgres", False):
+            cursor.execute(
+                "SELECT column_name AS name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'price_observations';"
+            )
+        else:
+            cursor.execute("PRAGMA table_info(price_observations);")
         existing_cols = {row["name"] for row in cursor.fetchall()}
 
         new_columns = [
@@ -33,6 +39,20 @@ def run_database_migration(db_path: Optional[Union[str, Path]] = None) -> None:
         for col_name, col_def in new_columns:
             if col_name not in existing_cols:
                 cursor.execute(f"ALTER TABLE price_observations ADD COLUMN {col_name} {col_def};")
+
+        if getattr(conn, "is_postgres", False):
+            cursor.execute(
+                "SELECT column_name AS name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'evidence_records';"
+            )
+            evidence_columns = {row["name"] for row in cursor.fetchall()}
+            if "artifact_content" not in evidence_columns:
+                cursor.execute("ALTER TABLE evidence_records ADD COLUMN artifact_content BYTEA;")
+        else:
+            cursor.execute("PRAGMA table_info(evidence_records);")
+            evidence_columns = {row["name"] for row in cursor.fetchall()}
+            if "artifact_content" not in evidence_columns:
+                cursor.execute("ALTER TABLE evidence_records ADD COLUMN artifact_content BLOB;")
 
         # 2. Create Benchmarks Table if not exists
         cursor.execute(

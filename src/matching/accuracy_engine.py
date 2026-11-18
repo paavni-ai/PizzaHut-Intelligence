@@ -61,7 +61,7 @@ class AccuracyEngine:
                     continue
                 provenance = b.get("provenance") or {}
                 benchmark_evidence = cursor.execute(
-                    "SELECT source_url, file_hash_sha256, file_path FROM evidence_records WHERE id = ?",
+                    "SELECT source_url, file_hash_sha256, file_path, artifact_content FROM evidence_records WHERE id = ?",
                     (provenance.get("evidence_id"),),
                 ).fetchone()
                 if (
@@ -80,7 +80,8 @@ class AccuracyEngine:
                     """
                     SELECT po.id, po.original_price, po.verification_status, po.source_url,
                            po.collected_at, po.evidence_id, po.data_origin, po.notes,
-                           ev.file_hash_sha256, ev.file_path, cat.code AS category_code,
+                           ev.file_hash_sha256, ev.file_path, ev.artifact_content,
+                           cat.code AS category_code,
                            p.name as product_name, pv.size_name
                     FROM price_observations po
                     JOIN product_variants pv ON po.product_variant_id = pv.id
@@ -216,7 +217,7 @@ class AccuracyEngine:
             if row["data_origin"] == "quarantined_seed" or row["is_quarantined"]:
                 raise ValueError("Quarantined seed observations cannot be promoted or corrected.")
             evidence = conn.execute(
-                "SELECT source_url, file_hash_sha256, file_path FROM evidence_records WHERE id = ?",
+                "SELECT source_url, file_hash_sha256, file_path, artifact_content FROM evidence_records WHERE id = ?",
                 (evidence_id,),
             ).fetchone()
             if (

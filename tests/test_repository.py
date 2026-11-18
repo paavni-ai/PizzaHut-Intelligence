@@ -1,6 +1,7 @@
 """
 Unit tests for the PizzaIntelligenceRepository CRUD operations.
 """
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -63,10 +64,14 @@ class TestPizzaIntelligenceRepository(unittest.TestCase):
         direct_platform_id = next(p["id"] for p in platforms if p["code"] == "direct_web")
 
         # 1. Save evidence
+        capture_path = Path(self.temp_dir.name) / "captured-menu.html"
+        capture_path.write_text("<html>Captured menu price evidence</html>", encoding="utf-8")
         ev_id = self.repo.save_evidence(
             source_url="https://www.pizzahut.ae/menu/pizza/super-supreme",
-            evidence_type="url_log",
-            notes="Audit log captured"
+            evidence_type="html_snapshot",
+            file_path=str(capture_path),
+            file_hash_sha256=hashlib.sha256(capture_path.read_bytes()).hexdigest(),
+            notes="Audit capture"
         )
         self.assertGreater(ev_id, 0)
 

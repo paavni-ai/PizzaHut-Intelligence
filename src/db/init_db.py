@@ -27,7 +27,11 @@ CATEGORIES = [
 ]
 
 
-def initialize_database(db_path: Optional[Union[str, Path]] = None, reset: bool = False) -> None:
+def initialize_database(
+    db_path: Optional[Union[str, Path]] = None,
+    reset: bool = False,
+    seed_reference_data: bool = True,
+) -> None:
     """
     Initializes the SQLite database with the full schema and master reference data.
     """
@@ -36,6 +40,8 @@ def initialize_database(db_path: Optional[Union[str, Path]] = None, reset: bool 
 
     try:
         if reset:
+            if getattr(conn, "is_postgres", False):
+                raise ValueError("Reset is disabled for PostgreSQL databases to protect persistent research history.")
             # Drop tables in reverse foreign key order if reset requested
             tables = [
                 "promotions",
@@ -58,6 +64,10 @@ def initialize_database(db_path: Optional[Union[str, Path]] = None, reset: bool 
         with open(SCHEMA_FILE, "r", encoding="utf-8") as f:
             schema_script = f.read()
         cursor.executescript(schema_script)
+
+        if not seed_reference_data:
+            conn.commit()
+            return
 
         # 2. Seed Emirates (All 7 UAE Emirates)
         for emirate in UAE_EMIRATES:

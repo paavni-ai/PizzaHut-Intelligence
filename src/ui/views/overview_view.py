@@ -17,6 +17,8 @@ def render_overview_view(repo: PizzaIntelligenceRepository):
 
     # 1. Fetch live KPIs
     metrics = repo.get_summary_metrics()
+    average_medium = metrics["avg_medium_pizza_price"]
+    average_medium_display = f"{average_medium:.1f}" if average_medium is not None else "—"
 
     kpi1, kpi2, kpi3, kpi4, kpi5, kpi6 = st.columns(6)
     with kpi1:
@@ -50,8 +52,8 @@ def render_overview_view(repo: PizzaIntelligenceRepository):
         st.markdown(
             f"""<div class="kpi-container">
                 <div class="kpi-title">Avg Medium Pizza</div>
-                <div class="kpi-value">{metrics['avg_medium_pizza_price']:.1f} <span style="font-size:1rem;color:#64748B;">AED</span></div>
-                <div class="kpi-sub">Direct delivery base</div>
+                <div class="kpi-value">{average_medium_display} <span style="font-size:1rem;color:#64748B;">AED</span></div>
+                <div class="kpi-sub">QA-reviewed evidence only</div>
             </div>""",
             unsafe_allow_html=True,
         )
@@ -82,7 +84,7 @@ def render_overview_view(repo: PizzaIntelligenceRepository):
 
     with col_chart1:
         st.subheader("📊 Average Pizza Price by Brand & Size (AED)")
-        df_obs = repo.get_price_observations_df(limit=2000)
+        df_obs = repo.get_price_observations_df(trusted_only=True, limit=2000)
         if not df_obs.empty:
             df_chart = (
                 df_obs.groupby(["competitor_name", "normalized_size"])["original_price"]
@@ -149,7 +151,7 @@ def render_overview_view(repo: PizzaIntelligenceRepository):
 
     # 3. Live Filterable Observations Explorer
     st.subheader("🔍 Recent Verified Market Observations")
-    st.caption("Live observations query directly from SQLite database")
+    st.caption("Only human-reviewed, evidence-backed, non-quarantined observations appear here.")
 
     fcol1, fcol2, fcol3 = st.columns(3)
     emirates = repo.get_all_emirates()
@@ -175,6 +177,7 @@ def render_overview_view(repo: PizzaIntelligenceRepository):
         competitor_ids=sel_comp if sel_comp else None,
         emirate_ids=sel_em if sel_em else None,
         search_query=search_txt if search_txt else None,
+        trusted_only=True,
         limit=50,
     )
 

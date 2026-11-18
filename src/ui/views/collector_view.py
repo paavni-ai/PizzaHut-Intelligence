@@ -286,16 +286,19 @@ def render_collector_view(repo: PizzaIntelligenceRepository):
             format_func=lambda e: f"{e['name_en']} ({e['code']})",
             key="pizzahut_menu_emirate",
         )
-        if st.button("Collect public Pizza Hut UAE pizza menu", type="primary"):
+        if st.button("Run now — collect Pizza Hut UAE public menu", type="primary"):
             from src.scrapers.pizzahut_scraper import PizzaHutMenuScraper
-            with st.spinner("Capturing public menu pages and prices…"):
-                result = PizzaHutMenuScraper(db_path=repo.db_path).run_live_extraction(selected_emirate["code"])
-            st.info(
-                f"Run {result['status']}: {result['items_extracted']} price variants extracted, "
-                f"{result['items_verified']} verified. All extracted rows require QA."
-            )
-            if result.get("errors"):
-                st.warning("\n".join(result["errors"]))
+            try:
+                with st.spinner("Capturing public menu pages and prices…"):
+                    result = PizzaHutMenuScraper(db_path=repo.db_path).run_live_extraction(selected_emirate["code"])
+                st.info(
+                    f"Run {result['status']}: {result['items_extracted']} price variants extracted, "
+                    f"{result['items_verified']} verified. Run ID: {result['run_uuid']}. All extracted rows require QA."
+                )
+                if result.get("errors"):
+                    st.warning("\n".join(result["errors"]))
+            except Exception as exc:
+                st.error(f"Collection failed ({type(exc).__name__}). Check System Status and the research run log.")
 
         from src.db.validator import DatabaseValidator
         audit = DatabaseValidator(repo.db_path).validate_all()["checks"]["live_observation_quality"]

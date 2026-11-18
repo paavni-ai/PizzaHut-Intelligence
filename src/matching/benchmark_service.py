@@ -48,7 +48,7 @@ def add_verified_benchmark(
     conn = get_connection(db_path)
     try:
         evidence = conn.execute(
-            "SELECT source_url, file_hash_sha256, file_path FROM evidence_records WHERE id = ?",
+            "SELECT source_url, file_hash_sha256, file_path, artifact_content FROM evidence_records WHERE id = ?",
             (evidence_id,),
         ).fetchone()
         if not evidence:
