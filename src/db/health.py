@@ -22,6 +22,18 @@ EXPECTED_TABLES = (
     "benchmarks",
     "accuracy_evaluations",
     "human_corrections",
+    "platform_menu_items",
+    "menu_item_matches",
+    "menu_import_batches",
+    "menu_item_prices",
+    "menu_fee_observations",
+    "promotion_terms",
+    "promotion_weekdays",
+    "promotion_item_eligibility",
+    "cart_comparisons",
+    "cart_comparison_items",
+    "cart_platform_quotes",
+    "cart_quote_lines",
 )
 COUNT_TABLES = (
     "price_observations",

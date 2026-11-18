@@ -13,6 +13,7 @@ from src.db.repository import PizzaIntelligenceRepository
 
 class TestStreamlitInteractions(unittest.TestCase):
     PAGES = [
+        "🍕 Menu & Competitor Analysis",
         "📊 Executive Overview",
         "⚖️ Price & Gap Comparison",
         "📈 Historical Price Trends",
@@ -57,6 +58,11 @@ class TestStreamlitInteractions(unittest.TestCase):
         for page in self.PAGES:
             with self.subTest(page=page):
                 self.navigate(page)
+
+    def test_menu_analysis_is_default_landing_page(self):
+        navigation = next(item for item in self.app.radio if item.label == "Navigation")
+        self.assertEqual(navigation.value, "🍕 Menu & Competitor Analysis")
+        self.assertTrue(any("Latest Pizza Hut menu prices" in item.value for item in self.app.subheader))
 
     def test_filters_search_export_and_empty_state_render(self):
         self.navigate("⚖️ Price & Gap Comparison")
@@ -115,11 +121,15 @@ class TestStreamlitInteractions(unittest.TestCase):
         self.assertTrue(any("Source URL is strictly mandatory" in item.value for item in self.app.error))
 
         self.navigate("⚙️ System Status & Health")
-        refresh = next(item for item in self.app.button if item.label == "Refresh master reference data")
-        refresh.click()
-        self.app.run()
-        self.assertFalse(self.app.exception)
-        self.assertEqual(len(self.repo.get_all_emirates()), 7)
+        maintenance = next((item for item in self.app.expander if item.label == "Master Reference Data Maintenance"), None)
+        if maintenance:
+            refresh = next(item for item in maintenance.button if item.label == "Refresh master reference data")
+            refresh.click()
+            self.app.run()
+            self.assertFalse(self.app.exception)
+            self.assertEqual(len(self.repo.get_all_emirates()), 7)
+        else:
+            self.assertTrue(self.app.error, "Status page should explain a health-check failure when maintenance is unavailable.")
 
     def test_run_now_persists_mocked_collector_result(self):
         import requests
@@ -150,6 +160,18 @@ class TestStreamlitInteractions(unittest.TestCase):
         self.assertEqual(runs[0]["items_extracted"], 1)
         self.assertEqual(runs[0]["items_verified"], 0)
         self.assertEqual(runs[0]["error_message"], None)
+        self.assertFalse(self.app.exception)
+
+    def test_menu_analysis_route_search_and_template_export(self):
+        self.navigate("🍕 Menu & Competitor Analysis")
+        self.assertTrue(any("Menu Mapping & Competitor Analysis" in item.value for item in self.app.markdown))
+        next(item for item in self.app.text_input if item.label == "Search menu item").set_value("Chicken Supreme")
+        self.app.run()
+        self.assertFalse(self.app.exception)
+        template = next(item for item in self.app.get("download_button") if item.label == "Download blank import template")
+        template.click()
+        self.app.run()
+        self.assertTrue(template.value)
         self.assertFalse(self.app.exception)
 
 

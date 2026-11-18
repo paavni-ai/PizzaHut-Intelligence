@@ -108,11 +108,11 @@ def render_catalog_view(repo: PizzaIntelligenceRepository):
         if products:
             df_prod = pd.DataFrame(products)[[
                 "product_id", "competitor_name", "category_name", "product_name",
-                "size_name", "normalized_size", "crust_type", "diameter_inches"
+                "size_name", "normalized_size", "crust_type", "ingredients", "diameter_inches"
             ]]
             df_prod.columns = [
                 "Product ID", "Brand", "Category", "Item Name",
-                "Size Name", "Normalized Size", "Crust Type", "Diameter (Inches)"
+                "Size Name", "Normalized Size", "Crust Type", "Ingredients / defining toppings", "Diameter (Inches)"
             ]
             st.dataframe(df_prod, use_container_width=True, height=350)
         else:
@@ -129,6 +129,7 @@ def render_catalog_view(repo: PizzaIntelligenceRepository):
                     p_cat = st.selectbox("Select Category", options=cats, format_func=lambda c: c["name"])
                     p_name = st.text_input("Product Name", placeholder="e.g. Chicken Fajita")
                     p_norm = st.text_input("Canonical Name (e.g. chicken_fajita)", placeholder="chicken_fajita")
+                    p_ingredients = st.text_area("Ingredients / defining toppings (optional)")
                 with p_c2:
                     p_size = st.selectbox("Size Label", options=["Small", "Medium", "Large", "Personal", "X-Large"])
                     p_norm_size = st.selectbox("Normalized Size", options=["small", "medium", "large", "personal", "xlarge", "other"])
@@ -146,6 +147,7 @@ def render_catalog_view(repo: PizzaIntelligenceRepository):
                                 category_id=p_cat["id"],
                                 name=p_name.strip(),
                                 normalized_name=p_norm.strip() or p_name.strip().lower().replace(" ", "_"),
+                                ingredients=p_ingredients.strip() or None,
                             )
                             new_vid = repo.get_or_create_variant(
                                 product_id=new_pid,

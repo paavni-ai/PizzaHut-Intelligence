@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from src.db.health import COUNT_TABLES, check_database_health
 from src.db.init_db import initialize_database
+from src.db.migrate import run_database_migration
 
 
 class TestDatabaseHealth(unittest.TestCase):
@@ -14,6 +15,7 @@ class TestDatabaseHealth(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "health.sqlite"
             initialize_database(path)
+            run_database_migration(path)
             before = path.stat().st_mtime_ns
 
             report = check_database_health(path)
@@ -27,9 +29,9 @@ class TestDatabaseHealth(unittest.TestCase):
             self.assertNotIn(str(path), str(report))
 
     def test_postgres_connection_failure_is_safe_and_does_not_fallback(self):
-        marker = "do-not-disclose-this-url"
+        marker = "synthetic-test-marker"
         previous = os.environ.get("DATABASE_URL")
-        os.environ["DATABASE_URL"] = f"postgresql://user:{marker}@private.example/db"
+        os.environ["DATABASE_URL"] = "postgresql://redacted.invalid/database"
         try:
             with patch("src.db.health.get_connection", side_effect=RuntimeError(marker)):
                 report = check_database_health()

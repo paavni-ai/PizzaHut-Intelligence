@@ -293,6 +293,7 @@ class PizzaIntelligenceRepository:
         description: Optional[str] = None,
         is_vegetarian: bool = False,
         is_spicy: bool = False,
+        ingredients: Optional[str] = None,
     ) -> int:
         with self._get_connection() as conn:
             row = conn.execute(
@@ -300,14 +301,17 @@ class PizzaIntelligenceRepository:
                 (competitor_id, category_id, name),
             ).fetchone()
             if row:
+                if ingredients is not None:
+                    conn.execute("UPDATE products SET ingredients=? WHERE id=?", (ingredients, row["id"]))
+                    conn.commit()
                 return row["id"]
 
             cursor = conn.execute(
                 """
                 INSERT INTO products (
                     competitor_id, category_id, name, normalized_name,
-                    description, is_vegetarian, is_spicy
-                ) VALUES (?, ?, ?, ?, ?, ?, ?);
+                    description, is_vegetarian, is_spicy, ingredients
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
                 """,
                 (
                     competitor_id,
@@ -317,6 +321,7 @@ class PizzaIntelligenceRepository:
                     description,
                     1 if is_vegetarian else 0,
                     1 if is_spicy else 0,
+                    ingredients,
                 ),
             )
             conn.commit()
@@ -372,7 +377,7 @@ class PizzaIntelligenceRepository:
         with self._get_connection() as conn:
             query = """
                 SELECT p.id as product_id, p.name as product_name, p.normalized_name,
-                       p.is_vegetarian, p.is_spicy, p.description,
+                       p.is_vegetarian, p.is_spicy, p.description, p.ingredients,
                        c.id as competitor_id, c.name as competitor_name,
                        cat.id as category_id, cat.name as category_name,
                        pv.id as variant_id, pv.size_name, pv.normalized_size,

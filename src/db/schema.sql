@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS products (
     name TEXT NOT NULL,
     normalized_name TEXT,
     description TEXT,
+    ingredients TEXT,
     is_vegetarian INTEGER NOT NULL DEFAULT 0 CHECK (is_vegetarian IN (0, 1)),
     is_spicy INTEGER NOT NULL DEFAULT 0 CHECK (is_spicy IN (0, 1)),
     image_url TEXT,

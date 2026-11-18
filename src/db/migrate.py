@@ -54,6 +54,17 @@ def run_database_migration(db_path: Optional[Union[str, Path]] = None) -> None:
             if "artifact_content" not in evidence_columns:
                 cursor.execute("ALTER TABLE evidence_records ADD COLUMN artifact_content BLOB;")
 
+        if getattr(conn, "is_postgres", False):
+            cursor.execute(
+                "SELECT column_name AS name FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'products';"
+            )
+        else:
+            cursor.execute("PRAGMA table_info(products);")
+        product_columns = {row["name"] for row in cursor.fetchall()}
+        if "ingredients" not in product_columns:
+            cursor.execute("ALTER TABLE products ADD COLUMN ingredients TEXT;")
+
         # 2. Create Benchmarks Table if not exists
         cursor.execute(
             """
@@ -113,6 +124,11 @@ def run_database_migration(db_path: Optional[Union[str, Path]] = None) -> None:
         # 5. Create Indexes
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_price_observations_quarantine ON price_observations(is_quarantined);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_benchmarks_lookup ON benchmarks(competitor_id, normalized_name, normalized_size, channel_id, emirate_id);")
+
+        # Additive Menu Mapping & Price Comparison tables. The script is safe to
+        # reapply and does not backfill or rewrite any historical research rows.
+        menu_schema = Path(__file__).parent / "migrations" / "menu_mapping.sql"
+        cursor.executescript(menu_schema.read_text(encoding="utf-8"))
 
         conn.commit()
     finally:

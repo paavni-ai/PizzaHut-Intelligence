@@ -18,6 +18,7 @@ from src.ui.views.collector_view import render_collector_view
 from src.ui.views.comparison_view import render_comparison_view
 from src.ui.views.evidence_view import render_evidence_view
 from src.ui.views.history_view import render_history_view
+from src.ui.views.menu_analysis_view import render_menu_analysis_view
 from src.ui.views.overview_view import render_overview_view
 from src.ui.views.promotions_view import render_promotions_view
 from src.ui.views.reports_view import render_reports_view
@@ -93,6 +94,7 @@ with st.sidebar:
     st.write("---")
 
     navigation_options = {
+        "🍕 Menu & Competitor Analysis": render_menu_analysis_view,
         "📊 Executive Overview": render_overview_view,
         "⚖️ Price & Gap Comparison": render_comparison_view,
         "📈 Historical Price Trends": render_history_view,
